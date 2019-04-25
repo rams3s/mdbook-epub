@@ -84,13 +84,21 @@ fn assets_in_markdown(src: &str, parent_dir: &Path) -> Result<Vec<PathBuf>, Erro
             Ok(url) => {
                 let destination_path = external_resource_filepath(&download_folder, &url)?;
 
-                // :TODO: do not download if already in cache
-                println!("downloading {} to '{}'", url, destination_path.display());
+                if !destination_path.exists() {
+                    info!("downloading {} to '{}'", url, destination_path.display());
 
-                let mut response = reqwest::get(url)?;
-                let mut dest = File::create(&destination_path)?;
+                    let mut response = reqwest::get(url)?;
+                    let mut dest = File::create(&destination_path)?;
 
-                copy(&mut response, &mut dest)?;
+                    copy(&mut response, &mut dest)?;
+                } else {
+                    debug!(
+                        "asset at {} already downloaded to '{}'",
+                        url,
+                        destination_path.display()
+                    );
+                }
+
                 destination_path
             }
             Err(_) => {
