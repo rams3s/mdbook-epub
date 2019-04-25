@@ -3,7 +3,12 @@ use mdbook::book::BookItem;
 use mdbook::renderer::RenderContext;
 use mime_guess::{self, Mime};
 use pulldown_cmark::{Event, Parser, Tag};
+use std::collections::hash_map::DefaultHasher;
+use std::fs::File;
+use std::hash::{Hash, Hasher};
+use std::io::copy;
 use std::path::{Path, PathBuf};
+use url::Url;
 
 pub fn find(ctx: &RenderContext) -> Result<Vec<Asset>, Error> {
     let mut assets = Vec::new();
@@ -68,25 +73,37 @@ fn assets_in_markdown(src: &str, parent_dir: &Path) -> Result<Vec<PathBuf>, Erro
         }
     }
 
-    // TODO: Allow linked images to be either a URL or path on disk
-
-    // I'm assuming you'd just determine if each link is a URL or filename so
-    // the `find()` function can put together a deduplicated list of URLs and
-    // try to download all of them (in parallel?) to a temporary location. It'd
-    // be nice if we could have some sort of caching mechanism by using the
-    // destination directory (hash the URL and store it as
-    // `book/epub/cache/$hash.$ext`?).
     let mut assets = Vec::new();
 
+    // :TODO: use RenderContext.destination instead
+    let download_folder = Path::new("book").join("epub").join("cache");
+    std::fs::create_dir_all(&download_folder)?;
+
     for link in found {
-        let link = PathBuf::from(link);
-        let filename = parent_dir.join(link);
-        let filename = filename.canonicalize().with_context(|_| {
-            format!(
-                "Unable to fetch the canonical path for {}",
-                filename.display()
-            )
-        })?;
+        let filename = match Url::parse(&link) {
+            Ok(url) => {
+                let destination_path = external_resource_filepath(&download_folder, &url)?;
+
+                // :TODO: do not download if already in cache
+                println!("downloading {} to '{}'", url, destination_path.display());
+
+                let mut response = reqwest::get(url)?;
+                let mut dest = File::create(&destination_path)?;
+
+                copy(&mut response, &mut dest)?;
+                destination_path
+            }
+            Err(_) => {
+                let link = PathBuf::from(link);
+                let filename = parent_dir.join(link);
+                filename.canonicalize().with_context(|_| {
+                    format!(
+                        "Unable to fetch the canonical path for {}",
+                        filename.display()
+                    )
+                })?
+            }
+        };
 
         if !filename.is_file() {
             return Err(failure::err_msg(format!(
@@ -99,6 +116,35 @@ fn assets_in_markdown(src: &str, parent_dir: &Path) -> Result<Vec<PathBuf>, Erro
     }
 
     Ok(assets)
+}
+
+/// Return the filepath where an external resource is/will be downloaded.
+/// The filename will have the following form `$download_folder/$hash_of_url.$ext`
+pub fn external_resource_filepath<P: AsRef<Path>>(
+    download_folder: P,
+    url: &Url,
+) -> Result<PathBuf, Error> {
+    let mut s = DefaultHasher::new();
+    url.hash(&mut s);
+    let hash = s.finish();
+
+    let file = url
+        .path_segments()
+        .and_then(std::iter::Iterator::last)
+        .unwrap();
+    let extension = Path::new(file).extension().unwrap_or_default();
+    let filename = download_folder
+        .as_ref()
+        .join(hash.to_string())
+        .with_extension(extension);
+    let filename = filename.canonicalize().with_context(|_| {
+        format!(
+            "Unable to fetch the canonical path for {}",
+            filename.display()
+        )
+    })?;
+
+    Ok(filename)
 }
 
 #[cfg(test)]
@@ -118,5 +164,23 @@ mod tests {
         let got = assets_in_markdown(src, &parent_dir).unwrap();
 
         assert_eq!(got, should_be);
+    }
+
+    #[test]
+    fn find_remote_image() {
+        let parent_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dummy/src");
+        let src =
+            "![Image 1](https://github.com/Michael-F-Bryan/mdbook-epub/raw/master/tests/dummy/src/rust-logo.png)\n";
+        let should_be = vec![
+                external_resource_filepath(
+                    &Path::new(env!("CARGO_MANIFEST_DIR")).join("book").join("epub").join("cache"),
+                    &Url::parse("https://github.com/Michael-F-Bryan/mdbook-epub/raw/master/tests/dummy/src/rust-logo.png").unwrap()
+                    ).unwrap()
+            ];
+
+        let got = assets_in_markdown(src, &parent_dir).unwrap();
+
+        assert_eq!(got, should_be);
+        assert!(got[0].exists());
     }
 }

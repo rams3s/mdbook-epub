@@ -9,11 +9,13 @@ extern crate log;
 extern crate mdbook;
 extern crate mime_guess;
 extern crate pulldown_cmark;
+extern crate reqwest;
 extern crate semver;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate url;
 
 use failure::Error;
 use mdbook::config::Config as MdConfig;
