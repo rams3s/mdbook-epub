@@ -26,7 +26,7 @@ pub fn find(ctx: &RenderContext) -> Result<Vec<Asset>, Error> {
             let parent = full_path
                 .parent()
                 .expect("All book chapters have a parent directory");
-            let found = assets_in_markdown(&ch.content, parent)?;
+            let found = assets_in_markdown(&ch.content, parent, &ctx.destination.join("cache"))?;
 
             for full_filename in found {
                 let relative = full_filename.strip_prefix(&src_dir).unwrap();
@@ -64,7 +64,11 @@ impl Asset {
     }
 }
 
-fn assets_in_markdown(src: &str, parent_dir: &Path) -> Result<Vec<PathBuf>, Error> {
+fn assets_in_markdown(
+    src: &str,
+    parent_dir: &Path,
+    cache_dir: &Path,
+) -> Result<Vec<PathBuf>, Error> {
     let mut found = Vec::new();
 
     for event in Parser::new(src) {
@@ -75,14 +79,13 @@ fn assets_in_markdown(src: &str, parent_dir: &Path) -> Result<Vec<PathBuf>, Erro
 
     let mut assets = Vec::new();
 
-    // :TODO: use RenderContext.destination instead
-    let download_folder = Path::new("book").join("epub").join("cache");
-    std::fs::create_dir_all(&download_folder)?;
+    // :TODO: create only if necessary
+    std::fs::create_dir_all(cache_dir)?;
 
     for link in found {
         let filename = match Url::parse(&link) {
             Ok(url) => {
-                let destination_path = external_resource_filepath(&download_folder, &url)?;
+                let destination_path = external_resource_filepath(cache_dir, &url)?;
 
                 if !destination_path.exists() {
                     info!("downloading {} to '{}'", url, destination_path.display());
@@ -127,10 +130,10 @@ fn assets_in_markdown(src: &str, parent_dir: &Path) -> Result<Vec<PathBuf>, Erro
     Ok(assets)
 }
 
-/// Return the filepath where an external resource is/will be downloaded.
-/// The filename will have the following form `$download_folder/$hash_of_url.$ext`
+/// Return the filepath where an external resource is/will be downloaded / cached.
+/// The filename will have the following form `$cache_dir/$hash_of_url.$ext`
 pub fn external_resource_filepath<P: AsRef<Path>>(
-    download_folder: P,
+    cache_dir: P,
     url: &Url,
 ) -> Result<PathBuf, Error> {
     let mut s = DefaultHasher::new();
@@ -142,7 +145,7 @@ pub fn external_resource_filepath<P: AsRef<Path>>(
         .and_then(std::iter::Iterator::last)
         .unwrap();
     let extension = Path::new(file).extension().unwrap_or_default();
-    let filename = download_folder
+    let filename = cache_dir
         .as_ref()
         .join(hash.to_string())
         .with_extension(extension);
@@ -152,6 +155,9 @@ pub fn external_resource_filepath<P: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
+    extern crate tempdir;
+
+    use self::tempdir::TempDir;
     use super::*;
 
     #[test]
@@ -164,7 +170,7 @@ mod tests {
             parent_dir.join("reddit.svg").canonicalize().unwrap(),
         ];
 
-        let got = assets_in_markdown(src, &parent_dir).unwrap();
+        let got = assets_in_markdown(src, &parent_dir, &Path::new("")).unwrap();
 
         assert_eq!(got, should_be);
     }
@@ -172,16 +178,17 @@ mod tests {
     #[test]
     fn find_remote_image() {
         let parent_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dummy/src");
+        let cache_dir = TempDir::new("cache").unwrap();
         let src =
             "![Image 1](https://github.com/Michael-F-Bryan/mdbook-epub/raw/master/tests/dummy/src/rust-logo.png)\n";
         let should_be = vec![
                 external_resource_filepath(
-                    &Path::new(env!("CARGO_MANIFEST_DIR")).join("book").join("epub").join("cache"),
+                    cache_dir.path(),
                     &Url::parse("https://github.com/Michael-F-Bryan/mdbook-epub/raw/master/tests/dummy/src/rust-logo.png").unwrap()
                     ).unwrap()
             ];
 
-        let got = assets_in_markdown(src, &parent_dir).unwrap();
+        let got = assets_in_markdown(src, &parent_dir, cache_dir.path()).unwrap();
 
         assert_eq!(got, should_be);
         assert!(got[0].exists());
