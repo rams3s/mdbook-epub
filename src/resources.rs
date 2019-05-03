@@ -99,7 +99,10 @@ fn assets_in_markdown(src: &str, parent_dir: &Path) -> Result<Vec<PathBuf>, Erro
                     );
                 }
 
-                destination_path
+                destination_path.canonicalize().context(format!(
+                    "Unable to fetch the canonical path for {}",
+                    destination_path.display()
+                ))?
             }
             Err(_) => {
                 let link = PathBuf::from(link);
@@ -143,10 +146,6 @@ pub fn external_resource_filepath<P: AsRef<Path>>(
         .as_ref()
         .join(hash.to_string())
         .with_extension(extension);
-    let filename = filename.canonicalize().context(format!(
-        "Unable to fetch the canonical path for {}",
-        filename.display()
-    ))?;
 
     Ok(filename)
 }
