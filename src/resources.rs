@@ -26,7 +26,7 @@ pub fn find(ctx: &RenderContext) -> Result<Vec<Asset>, Error> {
             let parent = full_path
                 .parent()
                 .expect("All book chapters have a parent directory");
-            let found = assets_in_markdown(&ch.content, parent, &ctx.destination.join("cache"))?;
+            let found = assets_in_markdown(&ch.content, parent).unwrap();
 
             for full_filename in found {
                 let relative = full_filename.strip_prefix(&src_dir).unwrap();
@@ -36,6 +36,21 @@ pub fn find(ctx: &RenderContext) -> Result<Vec<Asset>, Error> {
     }
 
     Ok(assets)
+}
+
+pub fn process_remote_assets(ctx: &mut RenderContext) -> Result<(), Error> {
+    let cache_dir = ctx.destination.join("cache");
+
+    // :TODO: create only if necessary
+    std::fs::create_dir_all(&cache_dir)?;
+
+    ctx.book.for_each_mut(|section| {
+        if let BookItem::Chapter(ref mut ch) = *section {
+            process_remote_assets_in_chapter(&mut ch.content, &cache_dir).unwrap();
+        }
+    });
+
+    Ok(())
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -64,9 +79,45 @@ impl Asset {
     }
 }
 
-fn assets_in_markdown(
-    src: &str,
-    parent_dir: &Path,
+fn assets_in_markdown(src: &str, parent_dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let mut found = Vec::new();
+
+    for event in Parser::new(src) {
+        if let Event::Start(Tag::Image(dest, _)) = event {
+            found.push(dest.into_owned());
+        }
+    }
+
+    let mut assets = Vec::new();
+
+    for link in found {
+        let link = PathBuf::from(link);
+        let filename = if link.is_absolute() {
+            link
+        } else {
+            parent_dir.join(link)
+        };
+
+        let filename = filename.canonicalize().context(format!(
+            "Unable to fetch the canonical path for {}",
+            filename.display()
+        ))?;
+
+        if !filename.is_file() {
+            return Err(failure::err_msg(format!(
+                "Asset was not a file, {}",
+                filename.display()
+            )));
+        }
+
+        assets.push(filename);
+    }
+
+    Ok(assets)
+}
+
+fn process_remote_assets_in_chapter(
+    src: &mut String,
     cache_dir: &Path,
 ) -> Result<Vec<PathBuf>, Error> {
     let mut found = Vec::new();
@@ -79,55 +130,36 @@ fn assets_in_markdown(
 
     let mut assets = Vec::new();
 
-    // :TODO: create only if necessary
-    std::fs::create_dir_all(cache_dir)?;
-
     for link in found {
-        let filename = match Url::parse(&link) {
-            Ok(url) => {
-                let destination_path = external_resource_filepath(cache_dir, &url)?;
+        if let Ok(url) = Url::parse(&link) {
+            let destination_path = external_resource_filepath(cache_dir, &url)?;
 
-                if !destination_path.exists() {
-                    info!("downloading {} to '{}'", url, destination_path.display());
+            if !destination_path.exists() {
+                info!("downloading {} to '{}'", url, destination_path.display());
 
-                    if url.scheme() == "file" {
-                        std::fs::copy(url.path(), &destination_path)?;
-                    } else {
-                        let mut response = reqwest::get(url)?;
-                        let mut dest = File::create(&destination_path)?;
-                        copy(&mut response, &mut dest)?;
-                    }
+                if url.scheme() == "file" {
+                    std::fs::copy(url.path(), &destination_path)?;
                 } else {
-                    debug!(
-                        "asset at {} already downloaded to '{}'",
-                        url,
-                        destination_path.display()
-                    );
+                    let mut response = reqwest::get(url)?;
+                    let mut dest = File::create(&destination_path)?;
+                    copy(&mut response, &mut dest)?;
                 }
-
-                destination_path.canonicalize().context(format!(
-                    "Unable to fetch the canonical path for {}",
+            } else {
+                debug!(
+                    "asset at {} already downloaded to '{}'",
+                    url,
                     destination_path.display()
-                ))?
+                );
             }
-            Err(_) => {
-                let link = PathBuf::from(link);
-                let filename = parent_dir.join(link);
-                filename.canonicalize().context(format!(
-                    "Unable to fetch the canonical path for {}",
-                    filename.display()
-                ))?
-            }
+
+            let destination_path = destination_path.canonicalize().context(format!(
+                "Unable to fetch the canonical path for {}",
+                destination_path.display()
+            ))?;
+
+            *src = src.replace(&link, &destination_path.to_str().unwrap());
+            assets.push(destination_path);
         };
-
-        if !filename.is_file() {
-            return Err(failure::err_msg(format!(
-                "Asset was not a file, {}",
-                filename.display()
-            )));
-        }
-
-        assets.push(filename);
     }
 
     Ok(assets)
@@ -173,22 +205,21 @@ mod tests {
             parent_dir.join("reddit.svg").canonicalize().unwrap(),
         ];
 
-        let got = assets_in_markdown(src, &parent_dir, &Path::new("")).unwrap();
+        let got = assets_in_markdown(src, &parent_dir).unwrap();
 
         assert_eq!(got, should_be);
     }
 
     #[test]
-    fn find_remote_image() {
+    fn process_remote_image() {
         let cache_dir = TempDir::new("cache").unwrap();
-
         let parent_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dummy/src");
         let filepath = parent_dir.join("rust-logo.png").canonicalize().unwrap();
 
-        // using the `file` scheme will take the same code path as a remote path (e.g. http)
+        // using the `file` scheme takes the same code path as a remote url would
         let url = format!("file://{}", filepath.display());
-        let src = format!("![Image 1]({})\n", url);
-        let got = assets_in_markdown(&src, &parent_dir, cache_dir.path()).unwrap();
+        let mut src = format!("![Image 1]({})\n", url);
+        let got = process_remote_assets_in_chapter(&mut src, cache_dir.path()).unwrap();
 
         let should_be =
             vec![
@@ -200,6 +231,6 @@ mod tests {
 
         assert_eq!(got, should_be);
         assert!(got[0].exists());
-        // :TODO: check src was updated to point to cache
+        assert!(src.find(got[0].to_str().unwrap()).is_some());
     }
 }

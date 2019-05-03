@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Cursor, Read, Write};
 
@@ -15,14 +16,14 @@ use DEFAULT_CSS;
 /// The actual EPUB book renderer.
 #[derive(Debug)]
 pub struct Generator<'a> {
-    ctx: &'a RenderContext,
-    builder: EpubBuilder<ZipLibrary>,
+    ctx: &'a mut RenderContext,
+    builder: RefCell<EpubBuilder<ZipLibrary>>,
     config: Config,
 }
 
 impl<'a> Generator<'a> {
-    pub fn new(ctx: &'a RenderContext) -> Result<Generator<'a>, Error> {
-        let builder = EpubBuilder::new(ZipLibrary::new().sync()?).sync()?;
+    pub fn new(ctx: &'a mut RenderContext) -> Result<Generator<'a>, Error> {
+        let builder = RefCell::new(EpubBuilder::new(ZipLibrary::new().sync()?).sync()?);
 
         let config = Config::from_render_context(ctx)?;
 
@@ -34,17 +35,19 @@ impl<'a> Generator<'a> {
     }
 
     fn populate_metadata(&mut self) -> Result<(), Error> {
-        self.builder.metadata("generator", "mdbook-epub").sync()?;
+        let mut builder = self.builder.borrow_mut();
+
+        builder.metadata("generator", "mdbook-epub").sync()?;
 
         if let Some(title) = self.ctx.config.book.title.clone() {
-            self.builder.metadata("title", title).sync()?;
+            builder.metadata("title", title).sync()?;
         }
         if let Some(desc) = self.ctx.config.book.description.clone() {
-            self.builder.metadata("description", desc).sync()?;
+            builder.metadata("description", desc).sync()?;
         }
 
         if !self.ctx.config.book.authors.is_empty() {
-            self.builder
+            builder
                 .metadata("author", self.ctx.config.book.authors.join(", "))
                 .sync()?;
         }
@@ -56,11 +59,12 @@ impl<'a> Generator<'a> {
         info!("Generating the EPUB book");
 
         self.populate_metadata()?;
+        self.process_remote_assets()?;
         self.generate_chapters()?;
 
         self.embed_stylesheets()?;
         self.additional_assets()?;
-        self.builder.generate(writer).sync()?;
+        self.builder.borrow_mut().generate(writer).sync()?;
 
         Ok(())
     }
@@ -74,14 +78,14 @@ impl<'a> Generator<'a> {
                 // but we only want the top level here so we can recursively
                 // visit the chapters.
                 debug!("Adding chapter \"{}\"", ch);
-                self.add_chapter(ch)?;
+                self.add_chapter(ch).unwrap();
             }
         }
 
         Ok(())
     }
 
-    fn add_chapter(&mut self, ch: &Chapter) -> Result<(), Error> {
+    fn add_chapter(&self, ch: &Chapter) -> Result<(), Error> {
         let mut buffer = String::new();
         html::push_html(&mut buffer, Parser::new(&ch.content));
 
@@ -103,7 +107,7 @@ impl<'a> Generator<'a> {
             }
         }
 
-        self.builder.add_content(content).sync()?;
+        self.builder.borrow_mut().add_content(content).sync()?;
 
         // second pass to actually add the sub-chapters
         for sub_item in &ch.sub_items {
@@ -122,7 +126,18 @@ impl<'a> Generator<'a> {
         let stylesheet = self
             .generate_stylesheet()
             .context("Unable to generate stylesheet")?;
-        self.builder.stylesheet(stylesheet.as_slice()).sync()?;
+        self.builder
+            .borrow_mut()
+            .stylesheet(stylesheet.as_slice())
+            .sync()?;
+
+        Ok(())
+    }
+
+    fn process_remote_assets(&mut self) -> Result<(), Error> {
+        debug!("Processing external assets");
+
+        resources::process_remote_assets(self.ctx).context("Processing external assets failed")?;
 
         Ok(())
     }
@@ -148,6 +163,7 @@ impl<'a> Generator<'a> {
         let mt = asset.mimetype.to_string();
 
         self.builder
+            .borrow_mut()
             .add_resource(&asset.filename, content, mt)
             .sync()?;
 

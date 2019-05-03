@@ -13,8 +13,8 @@ use tempdir::TempDir;
 
 /// Convenience function for compiling the dummy book into an `EpubDoc`.
 fn generate_epub() -> Result<EpubDoc, Error> {
-    let (ctx, _md, temp) = create_dummy_book().unwrap();
-    mdbook_epub::generate(&ctx)?;
+    let (mut ctx, _md, temp) = create_dummy_book().unwrap();
+    mdbook_epub::generate(&mut ctx)?;
     let output_file = mdbook_epub::output_filename(temp.path(), &ctx.config);
 
     let output_file = output_file.display().to_string();
@@ -23,19 +23,19 @@ fn generate_epub() -> Result<EpubDoc, Error> {
 
 #[test]
 fn output_epub_exists() {
-    let (ctx, _md, temp) = create_dummy_book().unwrap();
+    let (mut ctx, _md, temp) = create_dummy_book().unwrap();
 
     let output_file = mdbook_epub::output_filename(temp.path(), &ctx.config);
 
     assert!(!output_file.exists());
-    mdbook_epub::generate(&ctx).unwrap();
+    mdbook_epub::generate(&mut ctx).unwrap();
     assert!(output_file.exists());
 }
 
 #[test]
 fn output_epub_is_valid() {
-    let (ctx, _md, temp) = create_dummy_book().unwrap();
-    mdbook_epub::generate(&ctx).unwrap();
+    let (mut ctx, _md, temp) = create_dummy_book().unwrap();
+    mdbook_epub::generate(&mut ctx).unwrap();
 
     let output_file = mdbook_epub::output_filename(temp.path(), &ctx.config);
     let output_file = output_file.display().to_string();
