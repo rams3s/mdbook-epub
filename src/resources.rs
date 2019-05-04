@@ -179,16 +179,17 @@ mod tests {
     fn find_remote_image() {
         let parent_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dummy/src");
         let cache_dir = TempDir::new("cache").unwrap();
-        let src =
-            "![Image 1](https://github.com/Michael-F-Bryan/mdbook-epub/raw/master/tests/dummy/src/rust-logo.png)\n";
-        let should_be = vec![
-                external_resource_filepath(
-                    cache_dir.path(),
-                    &Url::parse("https://github.com/Michael-F-Bryan/mdbook-epub/raw/master/tests/dummy/src/rust-logo.png").unwrap()
-                    ).unwrap()
-            ];
+        let url = "https://github.com/Michael-F-Bryan/mdbook-epub/raw/master/tests/dummy/src/rust-logo.png";
+        let src = format!("![Image 1]({})\n", url);
+        let got = assets_in_markdown(&src, &parent_dir, cache_dir.path()).unwrap();
 
-        let got = assets_in_markdown(src, &parent_dir, cache_dir.path()).unwrap();
+        let should_be =
+            vec![
+                external_resource_filepath(cache_dir.path(), &Url::parse(url).unwrap())
+                    .unwrap()
+                    .canonicalize()
+                    .unwrap(),
+            ];
 
         assert_eq!(got, should_be);
         assert!(got[0].exists());
