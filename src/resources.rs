@@ -90,10 +90,13 @@ fn assets_in_markdown(
                 if !destination_path.exists() {
                     info!("downloading {} to '{}'", url, destination_path.display());
 
-                    let mut response = reqwest::get(url)?;
-                    let mut dest = File::create(&destination_path)?;
-
-                    copy(&mut response, &mut dest)?;
+                    if url.scheme() == "file" {
+                        std::fs::copy(url.path(), &destination_path)?;
+                    } else {
+                        let mut response = reqwest::get(url)?;
+                        let mut dest = File::create(&destination_path)?;
+                        copy(&mut response, &mut dest)?;
+                    }
                 } else {
                     debug!(
                         "asset at {} already downloaded to '{}'",
@@ -177,15 +180,19 @@ mod tests {
 
     #[test]
     fn find_remote_image() {
-        let parent_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dummy/src");
         let cache_dir = TempDir::new("cache").unwrap();
-        let url = "https://github.com/Michael-F-Bryan/mdbook-epub/raw/master/tests/dummy/src/rust-logo.png";
+
+        let parent_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dummy/src");
+        let filepath = parent_dir.join("rust-logo.png").canonicalize().unwrap();
+
+        // using the `file` scheme will take the same code path as a remote path (e.g. http)
+        let url = format!("file://{}", filepath.display());
         let src = format!("![Image 1]({})\n", url);
         let got = assets_in_markdown(&src, &parent_dir, cache_dir.path()).unwrap();
 
         let should_be =
             vec![
-                external_resource_filepath(cache_dir.path(), &Url::parse(url).unwrap())
+                external_resource_filepath(cache_dir.path(), &Url::parse(&url).unwrap())
                     .unwrap()
                     .canonicalize()
                     .unwrap(),
@@ -193,5 +200,6 @@ mod tests {
 
         assert_eq!(got, should_be);
         assert!(got[0].exists());
+        // :TODO: check src was updated to point to cache
     }
 }
