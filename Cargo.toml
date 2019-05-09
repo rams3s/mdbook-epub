@@ -26,6 +26,7 @@ doc = false
 cargo = "0.24.0"
 
 [dependencies]
+pathdiff = "0.1.0"
 epub-builder = "0.3.0"
 failure = "0.1.1"
 failure_derive = "0.1.1"

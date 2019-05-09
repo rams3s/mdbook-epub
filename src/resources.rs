@@ -29,7 +29,7 @@ pub fn find(ctx: &RenderContext) -> Result<Vec<Asset>, Error> {
             let found = assets_in_markdown(&ch.content, parent).unwrap();
 
             for full_filename in found {
-                let relative = full_filename.strip_prefix(&src_dir).unwrap();
+                let relative = pathdiff::diff_paths(&full_filename, &src_dir).unwrap();
                 assets.push(Asset::new(relative, &full_filename));
             }
         }
