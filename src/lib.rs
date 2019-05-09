@@ -8,6 +8,7 @@ extern crate failure_derive;
 extern crate log;
 extern crate mdbook;
 extern crate mime_guess;
+extern crate pathdiff;
 extern crate pulldown_cmark;
 extern crate reqwest;
 extern crate semver;
