@@ -40,7 +40,7 @@ fn main() {
 fn run(args: &Args) -> Result<(), Error> {
     // get a `RenderContext`, either from stdin (because we're used as a plugin)
     // or by instrumenting MDBook directly (in standalone mode).
-    let ctx: RenderContext = if args.standalone {
+    let mut ctx: RenderContext = if args.standalone {
         let md = MDBook::load(&args.root).map_err(SyncFailure::new)?;
         let destination = md.build_dir_for("epub");
 
@@ -49,7 +49,7 @@ fn run(args: &Args) -> Result<(), Error> {
         serde_json::from_reader(io::stdin()).context("Unable to parse RenderContext")?
     };
 
-    mdbook_epub::generate(&ctx)?;
+    mdbook_epub::generate(&mut ctx)?;
 
     Ok(())
 }

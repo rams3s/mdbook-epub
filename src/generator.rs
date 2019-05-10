@@ -14,61 +14,57 @@ use DEFAULT_CSS;
 
 /// The actual EPUB book renderer.
 #[derive(Debug)]
-pub struct Generator<'a> {
-    ctx: &'a RenderContext,
+pub struct Generator {
     builder: EpubBuilder<ZipLibrary>,
     config: Config,
 }
 
-impl<'a> Generator<'a> {
-    pub fn new(ctx: &'a RenderContext) -> Result<Generator<'a>, Error> {
+impl Generator {
+    pub fn new(ctx: &RenderContext) -> Result<Generator, Error> {
         let builder = EpubBuilder::new(ZipLibrary::new().sync()?).sync()?;
 
         let config = Config::from_render_context(ctx)?;
 
-        Ok(Generator {
-            builder,
-            ctx,
-            config,
-        })
+        Ok(Generator { builder, config })
     }
 
-    fn populate_metadata(&mut self) -> Result<(), Error> {
+    fn populate_metadata(&mut self, ctx: &mut RenderContext) -> Result<(), Error> {
         self.builder.metadata("generator", "mdbook-epub").sync()?;
 
-        if let Some(title) = self.ctx.config.book.title.clone() {
+        if let Some(title) = ctx.config.book.title.clone() {
             self.builder.metadata("title", title).sync()?;
         }
-        if let Some(desc) = self.ctx.config.book.description.clone() {
+        if let Some(desc) = ctx.config.book.description.clone() {
             self.builder.metadata("description", desc).sync()?;
         }
 
-        if !self.ctx.config.book.authors.is_empty() {
+        if !ctx.config.book.authors.is_empty() {
             self.builder
-                .metadata("author", self.ctx.config.book.authors.join(", "))
+                .metadata("author", ctx.config.book.authors.join(", "))
                 .sync()?;
         }
 
         Ok(())
     }
 
-    pub fn generate<W: Write>(mut self, writer: W) -> Result<(), Error> {
+    pub fn generate<W: Write>(mut self, writer: W, ctx: &mut RenderContext) -> Result<(), Error> {
         info!("Generating the EPUB book");
 
-        self.populate_metadata()?;
-        self.generate_chapters()?;
+        self.populate_metadata(ctx)?;
+        self.process_remote_assets(ctx)?;
+        self.generate_chapters(ctx)?;
 
         self.embed_stylesheets()?;
-        self.additional_assets()?;
+        self.additional_assets(ctx)?;
         self.builder.generate(writer).sync()?;
 
         Ok(())
     }
 
-    fn generate_chapters(&mut self) -> Result<(), Error> {
+    fn generate_chapters(&mut self, ctx: &RenderContext) -> Result<(), Error> {
         debug!("Rendering Chapters");
 
-        for item in self.ctx.book.iter() {
+        for item in ctx.book.iter() {
             if let BookItem::Chapter(ref ch) = *item {
                 // iter() gives us an iterator over every node in the tree
                 // but we only want the top level here so we can recursively
@@ -127,11 +123,19 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
-    fn additional_assets(&mut self) -> Result<(), Error> {
+    fn process_remote_assets(&mut self, ctx: &mut RenderContext) -> Result<(), Error> {
+        debug!("Processing external assets");
+
+        resources::process_remote_assets(ctx).context("Processing external assets failed")?;
+
+        Ok(())
+    }
+
+    fn additional_assets(&mut self, ctx: &RenderContext) -> Result<(), Error> {
         debug!("Embedding additional assets");
 
-        let assets = resources::find(self.ctx)
-            .context("Inspecting the book for additional assets failed")?;
+        let assets =
+            resources::find(ctx).context("Inspecting the book for additional assets failed")?;
 
         for asset in assets {
             debug!("Embedding {}", asset.filename.display());

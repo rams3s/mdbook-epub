@@ -67,7 +67,7 @@ fn version_check(ctx: &RenderContext) -> Result<(), Error> {
 }
 
 /// Generate an `EPUB` version of the provided book.
-pub fn generate(ctx: &RenderContext) -> Result<(), Error> {
+pub fn generate(ctx: &mut RenderContext) -> Result<(), Error> {
     info!("Starting the EPUB generator");
     version_check(ctx)?;
 
@@ -83,7 +83,8 @@ pub fn generate(ctx: &RenderContext) -> Result<(), Error> {
     }
 
     let f = File::create(&outfile)?;
-    Generator::new(ctx)?.generate(f)?;
+    let generator = Generator::new(ctx)?;
+    generator.generate(f, ctx)?;
 
     Ok(())
 }
